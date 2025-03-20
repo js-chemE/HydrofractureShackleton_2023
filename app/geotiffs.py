@@ -107,13 +107,14 @@ def open_resampled(
         transform_original = src.transform
         meta = src.meta
 
-    resampled, resampled_transform = resample_dataset(
+    resampled, resampled_transform, resampled_meta = resample_dataset(
         np.nan_to_num(raster_original[0], nan=nan),
         transform_original,
         target_res,
         mode=mode,
     )
-    return resampled, resampled_transform
+    print(resampled_meta)
+    return resampled, resampled_transform, resampled_meta
 
 
 def resample_dataset(raster, transform, target_res, mode: str = "bilinear"):
@@ -131,6 +132,16 @@ def resample_dataset(raster, transform, target_res, mode: str = "bilinear"):
             count=count,
             dtype=raster.dtype,
             transform=transform,
+            meta={
+                "driver": "GTiff",
+                "height": raster.shape[-2],
+                "width": raster.shape[-1],
+                "count": count,
+                "dtype": raster.dtype,
+                "transform": transform,
+                "crs": rasterio.crs.CRS.from_epsg(4326),
+                "nodata": np.nan,
+            }
         ) as dataset:
             if count == 1 and raster.ndim == 2:
                 dataset.write(raster, 1)
@@ -154,6 +165,7 @@ def resample_dataset(raster, transform, target_res, mode: str = "bilinear"):
                 out_shape=(count, int(target_height), int(target_width)),
                 resampling=resamp,
             )
+            meta = src.meta
         resampled_transform = Affine(
             target_res,
             0,
@@ -162,7 +174,16 @@ def resample_dataset(raster, transform, target_res, mode: str = "bilinear"):
             -target_res,
             transform[5],
         )
-    return resampled, resampled_transform
+        resampled_meta = meta.copy()
+        resampled_meta.update(
+            {
+                "driver": "GTiff",
+                "height": int(target_height),
+                "width": int(target_width),
+                "transform": resampled_transform,
+            }
+        )
+    return resampled, resampled_transform, resampled_meta
 
 
 def create_active_crevasses_mask(
@@ -194,7 +215,7 @@ class GeoTiff(BaseModel):
     data: np.ndarray
     metadata: dict
     transform: Affine
-    crs: rasterio.crs.CRS
+    crs: rasterio.crs.CRS | None = Field(default=None)
     file_path: str = Field(default=None, alias="file_path")
 
     class Config:
@@ -259,4 +280,33 @@ def save_geotiff(tiff: GeoTiff, file_path: str) -> None:
     with rasterio.open(file_path, "w", **tiff.metadata) as dataset:
         dataset.write(tiff.data)
         dataset.transform = tiff.transform
-        dataset.crs = tiff.crs
+        #dataset.crs = tiff.crs
+
+def get_value(raster: np.ndarray, transform: Affine, x: float, y: float):
+    if raster.ndim == 2:
+        count = 1
+    elif raster.ndim > 3:
+        raise ValueError("To High dimension of raster")
+    else:
+        count = raster.shape[0]
+    with MemoryFile() as memfile:
+        with memfile.open(
+            driver="GTiff",
+            height=raster.shape[-2],
+            width=raster.shape[-1],
+            count=count,
+            dtype=raster.dtype,
+            transform=transform,
+            nodata=9,
+        ) as dataset:
+            if count == 1 and raster.ndim == 2:
+                dataset.write(raster, 1)
+            else:
+                for i in range(count):
+                    dataset.write(raster[i], i + 1)
+            
+            row, col = dataset.index(x, y)
+            print(raster.shape, dataset.read(1).shape, x, y, row, col)
+            rplt.show(dataset.read(1), transform=dataset.transform)
+            print(dataset.read(1)[row, col])
+            return dataset.read(1)[row, col]

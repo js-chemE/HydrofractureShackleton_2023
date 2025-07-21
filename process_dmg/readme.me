@@ -1,0 +1,25 @@
+# Process of S1 to Damage information
+
+## Steps
+
+### As part of 01_raw
+1. run GEE and export tiles with S1 images
+2. run GEE and export vx and vy tiles
+3. run unzip_s1.py to unzip all files/folders
+
+### As part of 02_processed
+1. run NeRD (run_nerd.py) to analyse S1 tiles and obtain the following (ideally on a cluster)
+    - dmg
+    - crevS
+    - alphaC
+2. run_delta_amgle.py to calculate the difference betwen velocity angle and alphaC
+    - delta-alpha
+    - emax
+    - emin
+    - delta_theta
+3. run_activeness.py
+    - act
+
+### As part of 02_cleaned
+1. run merge_tiles.py to merge all tiles of one year into one
+2. run resample_tiles.py to resample data to a lower resolution and clip it to green et al. (2022) coastlines. For the years 2023+ the coastline of 2022 is used.

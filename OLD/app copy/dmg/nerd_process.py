@@ -25,7 +25,6 @@ def validate_image_resolution(
     else:
         logger.error(f"Inconsistent grid spacing; dx values are {dx}")
         raise ValueError(f"Inconsistent grid spacing; dx values are {dx}")
-    logger.info(f"Image resolution validated: {dx[0]}")
     
 def setup_output_dirs(
         base_path: str
@@ -36,7 +35,6 @@ def setup_output_dirs(
     geotiff_path = os.path.join(out_path, 'geotiffs_python')
     os.makedirs(geotiff_path, exist_ok=True)
 
-    logger.info(f"Output directories created: {out_path}, {geotiff_path}")
     return out_path, geotiff_path
 
 def load_and_validate_image(

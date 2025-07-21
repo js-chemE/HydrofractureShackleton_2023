@@ -1,10 +1,6 @@
 import zipfile
 import os
 import shutil
-import logging
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 def unpack_zips_in_folder(folder_path: str, maintain_structure: bool =False) -> None:
     """
@@ -42,7 +38,7 @@ def unpack_zips_in_folder(folder_path: str, maintain_structure: bool =False) -> 
                         # Clean up temp folder
                         shutil.rmtree(temp_extract_dir)
 
-                logger.info(f"Unpacked {file_name} successfully.")
+                print(f"Unpacked {file_name} successfully.")
 
             except Exception as e:
-                logger.error(f"Failed to extract {file_name}: {e}")
+                print(f"Failed to extract {file_name}: {e}")

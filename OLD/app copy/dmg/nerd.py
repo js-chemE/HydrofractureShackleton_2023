@@ -202,13 +202,12 @@ def process_img_windows(rolling_da, nodata_val=-999):
         result = np.zeros( (rolling_da.shape[2], 8 )) 
         
         # loop
-        NUMBER_LOGS = 4
-        log_intervals = {int(rolling_da.shape[2] * frac) for frac in np.linspace(0, 1, NUMBER_LOGS + 1)}
-        
         for n in range(0,rolling_da.shape[2],1):
-            if n in log_intervals:
-                logger.info(f'--> {n}/{rolling_da.shape[2]} windows processed ({n/rolling_da.shape[2]*100:3.0f}%)')
-            window = rolling_da.isel(sample=n) 
+            # select window
+            # window = rolling_da[ :,:,n ]
+            if n == int(rolling_da.shape[2] * 0.25): # 25% of the way through the loop
+                logger.info(f'--> {n}/{rolling_da.shape[2]} windows processed')
+            window = rolling_da.isel(sample=n)
 
             # check if window contains NaN values (then skip) (can be a set nodata-value, or np.nan)
             if (window == nodata_val).any():
@@ -293,7 +292,6 @@ def read_img_to_grayscale(imPath, imName,dbmin=None, dbmax=None):
         
     img = rioxr.open_rasterio(os.path.join(imPath , imName))
     img_xyz = img.transpose("y","x","band")
-    img_xyz = img_xyz.astype('float32') # convert to float32 to avoid overflow when normalising
 
     if img_xyz.shape[2] > 3: # more than 3 bands. For now: assume that first three are RGB bands. Should update this.
         logger.warning(f"Img has more than 3 bands (nbands={img_xyz.shape[2]}), assuming first three are RGB bands and selecting these.")
@@ -343,16 +341,21 @@ def read_img_to_grayscale(imPath, imName,dbmin=None, dbmax=None):
                 img_clipped = img_xyz.isel(band=0).values
                 img_clipped[img_clipped < dbmin] = dbmin # first clip values larger than allowed min/max
                 img_clipped[img_clipped > dbmax] = dbmax
+                
                 img_norm = (img_clipped - dbmin) / (dbmax - dbmin) # normalise
+
+                # img_gray = xr.DataArray(data= img_norm, 
+                #                 coords=(img["y"], img["x"] ), 
+                #                 dims=("y","x"), name="gray_image", 
+                #                 attrs=img.attrs, indexes=img.indexes)#, fastpath=False)
+
                 img_gray = xr.DataArray(data= img_norm, 
                                 coords=(img["y"], img["x"] ), 
                                 dims=("y","x"), name="gray_image", 
                                 attrs=img.attrs )#, indexes=img.indexes)#, fastpath=False)
-                logger.debug(f'--> img is single band, shape {img_gray.shape}')
+
         else:    
             img_gray = img_xyz.isel(band=0)
-
-        logger.debug(f'--> img is single band, shape {img_gray.shape}')
     
     else:
         logger.error(f'Unexpected image shape {img_xyz.shape} or {img.shape}; should have dimensions (y,x,band), with bands=1 or 3')

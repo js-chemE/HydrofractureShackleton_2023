@@ -2,12 +2,13 @@ import re
 import glob
 from pathlib import Path
 import rasterio
+from rasterio.features import shapes
 from rasterio.merge import merge
 from rasterio.enums import Resampling
 from rasterio.io import MemoryFile
 from rasterio.mask import mask
 from rasterio.transform import Affine
-from rasterio.warp import reproject, calculate_default_transform, aligned_target #, Resampling
+from rasterio.warp import reproject, calculate_default_transform, Resampling #, Resampling
 
 import numpy as np
 from skimage import measure, morphology
@@ -16,8 +17,6 @@ from typing import Dict, List
 import shapely.geometry
 import geopandas as gpd
 import pandas as pd
-
-
 
 
 
@@ -102,6 +101,155 @@ def merge_all_split(folder: str):
         merge_split_tiles(base_path)
 
     logger.info("Done scanning folder.")
+
+def merge_tiles2extent(
+        folder: str,
+        files: List[str],
+        new_folder: str,
+        new_name: str | None = None,
+        date_start: pd.Timestamp | None = None,
+        date_end: pd.Timestamp | None = None,
+        ):
+    if not files:
+        logger.warning("No files provided for extent calculation.")
+        return
+    
+
+    with rasterio.open(os.path.join(folder, files[0])) as src:
+            meta0 = src.meta
+            transform0 = src.transform
+            crs0 = src.crs
+            data0 = src.read()
+
+    extent_lakes = np.zeros_like(data0[1])
+    for f in files:
+        f_split = f.split('_')
+        if date_start is not None and date_end is not None:
+            date_start_mosaic = pd.Timestamp(f_split[2])
+            date_end_mosaic = pd.Timestamp(f_split[3])
+            if (date_end_mosaic < date_start) and (date_start_mosaic > date_end):
+                logger.info(f"Skipping {f} as it is outside the date range.")
+                continue
+
+        with rasterio.open(os.path.join(folder, f)) as src:
+            meta = src.meta
+            transform = src.transform
+            crs = src.crs
+            data = src.read()
+        if (meta["width"] != meta0["width"]) or (meta["height"] != meta0["height"]):
+            logger.error(f"File {f} has different dimensions ({meta['width']}x{meta['height']}) than reference ({meta0['width']}x{meta0['height']}). Skipping.")
+            continue
+        if (transform != transform0) or (crs != crs0):
+            logger.error(f"File {f} has different transform or CRS than reference. Skipping.")
+            continue
+        
+        
+        extent_lakes[data[1] == 1] = 1
+        extent_lakes[extent_lakes == 0] = np.nan
+    
+    logger.info(f"Computed extent from {len(files)} files. -> {np.nansum(extent_lakes == 1)} pixels with lakes.")
+    # Finalize metadata for output
+    meta_out = meta0.copy()
+    meta_out.update({
+        "count": 1,                 # single band: the merged extent
+        "dtype": "float32",         # keep NaN
+        "nodata": np.nan            # explicitly mark NaN as nodata
+    })
+
+    if new_name is None:
+        new_name = "tile-merged_extent.tif"
+    
+    if new_folder is None:
+        new_folder = folder
+    
+    if not os.path.exists(new_folder):
+        os.makedirs(new_folder, exist_ok=True)
+
+    new_path = os.path.join(new_folder, new_name)
+
+    with rasterio.open(new_path, "w", **meta_out) as dst:
+        dst.write(extent_lakes.astype(np.float32), 1)
+
+    logger.info(f"Merged extent written to {new_path}")
+
+def merge_satextent2extent(
+    folder: str,
+    files: list[str],
+    dominant_sat_id: int,
+    new_folder: str,
+    new_name: str | None = None,
+):
+    if not files or len(files) < 2:
+        logger.warning("Not enough files provided for satellite extent merging.")
+        return
+    
+    # Open dominant raster as reference
+    dominant_file = os.path.join(folder, files[dominant_sat_id])
+    with rasterio.open(dominant_file) as src:
+        meta0 = src.meta.copy()
+        transform0 = src.transform
+        crs0 = src.crs
+        shape0 = (src.height, src.width)
+        data0 = src.read(1)   # assuming first band contains mask
+    
+    # Initialize merged extent array
+    extent_merged = np.zeros(shape0, dtype=np.float32)
+
+    # Insert dominant raster directly
+    extent_merged[data0 == 1] = 1
+    extent_merged[extent_merged == 0] = np.nan
+
+    
+    count_dominant = np.sum(extent_merged == 1)
+
+    # Loop through other rasters
+    for f_id, f in enumerate(files):
+        if f_id == dominant_sat_id:
+            continue
+        
+        with rasterio.open(os.path.join(folder, f)) as src:
+            data = src.read(1)  # first band
+            dst_array = np.empty(shape0, dtype=np.float32)
+
+            # Reproject + resample into dominant grid
+            reproject(
+                source=data,
+                destination=dst_array,
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=transform0,
+                dst_crs=crs0,
+                resampling=Resampling.nearest
+            )
+            count_other = np.sum(dst_array == 1)    
+            logger.debug(f"File {f} has {count_other} pixels with lakes after reprojection.")
+
+            extent_merged[dst_array == 1] = 1
+    
+    extent_merged[extent_merged == 0] = np.nan
+    count_extent = np.sum(extent_merged == 1)
+
+    # Finalize metadata
+    meta_out = meta0.copy()
+    meta_out.update({
+        "count": 1,
+        "dtype": "float32",
+        "nodata": np.nan
+    })
+
+    # Output filename
+    if new_name is None:
+        new_name = "merged_extent.tif"
+    out_file = os.path.join(new_folder, new_name)
+
+    with rasterio.open(out_file, "w", **meta_out) as dst:
+        dst.write(extent_merged, 1)
+
+    logger.info(f"Merged extent written to {out_file}")
+    logger.info(f"Dominant sat pixels: {count_dominant}, combined other pixels: {count_extent}")
+
+    
+
 
 """===================================================================================================
     Post-processing lakes
@@ -320,6 +468,42 @@ def vectorize(
         data={attribute_col: values}, geometry=polygons, crs=str(crs)
     )  # type: ignore
     return gdf
+
+def raster_to_vector(path_raster: str, value: int = 1, out_folder: str | None = None, out_name: str | None = None) -> gpd.GeoDataFrame:
+    with rasterio.open(path_raster) as src:
+        data = src.read(1)   # first band
+        mask = data == value
+
+        logger.info(f"Raster has >>{np.sum(mask)}<< pixels with value >>{value}<<.")
+
+        # materialize list here
+        results = [
+            {"properties": {"value": v}, "geometry": s}
+            for s, v in shapes(data, mask=mask, transform=src.transform)
+            if v == value
+        ]
+        logger.debug(f"Extracted >>{len(results)}<< shapes from raster.")
+
+        # Convert all shapes to geometries
+        geoms = [shapely.geometry.shape(r["geometry"]) for r in results]
+        logger.debug(f"Converted to >>{len(geoms)}<< geometries.")
+
+        if not geoms:
+            return gpd.GeoDataFrame(geometry=[], crs=src.crs)
+
+        gdf = gpd.GeoDataFrame(geometry=geoms, crs=src.crs)
+        logger.info(f"Created GeoDataFrame with >>{len(gdf)}<< geometries.")
+
+        if out_folder is not None:
+            os.makedirs(out_folder, exist_ok=True)
+            if out_name is None:
+                out_name = os.path.splitext(os.path.basename(path_raster))[0] + ".shp"
+            out_path = os.path.join(out_folder, out_name)
+            gdf.to_file(out_path)
+            logger.info(f"Saved GeoDataFrame to '{out_path}'.")
+
+    return gdf
+
 
 def get_value(raster: np.ndarray, transform: Affine, x: float, y: float):
     if raster.ndim == 2:

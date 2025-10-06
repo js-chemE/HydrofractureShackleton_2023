@@ -32,6 +32,7 @@ def run_drainage_detection(
         rgb_path: str = None,
         fname: str = "drainages",
         dominant_satellite: str = "L8",
+        min_shrink: float = 0.8,
         min_lake_area: float = 0.054 * 1e6,
 ):
     """
@@ -170,7 +171,7 @@ def run_drainage_detection(
                 drainage_rpt1 = find_drainages(
                     tif0[1] * noclouds1 * img1,
                     tif1[1],
-                    min_shrink=0.8,
+                    min_shrink=min_shrink,
                     min_lake_pixel_size=int(min_lake_area / dom_res**2),
                 )
 
@@ -337,7 +338,7 @@ def drainage2vector(drainage_rpt, transform, crs):
 def assert_rgb_depth(
     drainages_0: pd.DataFrame,
     drainages_1: pd.DataFrame,
-    rgb_path: str,
+    # rgb_path: str,
     tucket_path: str,
     max_fraction_depth_nan: float = 0.6,
     min_median_depth: float = 0.65,
@@ -362,12 +363,10 @@ def assert_rgb_depth(
         except KeyError:
             logger.warning(f"Lake '{lake_criteria}' not found in drainages_1. Skipping.")
             lake1 = None
-
         minx = min(lake0.bounds.minx) - offset
         miny = min(lake0.bounds.miny) - offset
         maxx = max(lake0.bounds.maxx) + offset
         maxy = max(lake0.bounds.maxy) + offset
-
         file_0 = lake0["file_0"].iloc[0]
         file_1 = lake0["file_1"].iloc[0]
 
@@ -441,14 +440,14 @@ def assert_rgb_depth(
                 infos[lake_criteria]["median-1"] = 0
                 infos[lake_criteria]["mean-1"] = 0
                 infos[lake_criteria]["volume-1"] = 0
-                continue
+                #continue
 
             except ValueError as e:
                 logger.error(f"Value error for lake '{lake_criteria}': {e}")
                 infos[lake_criteria]["median-1"] = 0
                 infos[lake_criteria]["mean-1"] = 0
                 infos[lake_criteria]["volume-1"] = 0
-                continue
+                #continue
 
             
 
@@ -504,6 +503,7 @@ def assert_rgb_depth(
                 continue
         infos[lake_criteria]["status"] = "valid"
         infos[lake_criteria]["reason"] = "passed all checks"
+
     reasons = [infos[lake]["reason"] for lake in drainages_0["criteria"].unique()]
     invalid_lakes = [lake for lake, info in infos.items() if info["status"] == "invalid"]
     logger.info(f"-> {len(infos.keys()):04d} lakes.")
@@ -519,7 +519,7 @@ def assert_rgb_depth(
 def combine_filter_drainages(
     drainage_path: str,
     output_path: str,
-    rgb_path: str = None,
+    # rgb_path: str = None,
     tucket_path: str = None,
     max_days: int = 10,
     min_lake_area: float = 0.054 * 1e6,
@@ -605,7 +605,7 @@ def combine_filter_drainages(
     asserted_infos = assert_rgb_depth(
         drainages_0 = drainages_0_area,
         drainages_1 = drainages_1_area,
-        rgb_path = rgb_path,
+        # rgb_path = rgb_path,
         tucket_path = tucket_path,
         max_fraction_depth_nan=max_fraction_depth_nan,
         min_median_depth=min_median_depth,
@@ -618,7 +618,6 @@ def combine_filter_drainages(
         lambda row: asserted_infos[row["criteria"]], axis=1, result_type="expand"
     )
     drainages_asserted = pd.concat([drainages_asserted, new_columns], axis=1)
-    print(drainages_asserted.columns)
 
     lakes_to_remove = [asserted_criteria for asserted_criteria, info in asserted_infos.items() if info["status"] == "invalid"]
     drainages_passed = drainages_asserted[~drainages_asserted["criteria"].isin(lakes_to_remove)].reset_index(drop=True)
@@ -639,8 +638,6 @@ def combine_filter_drainages(
     ].reset_index(drop=True)
     logger.info(f"Filtered window 1 drainages to ({drainages_1.shape[0]}) matching criteria from window 0.")
 
-    
-    print(drainages_0.columns)
     """Export"""
     fname = os.path.split(drainage_path)[-1]
     drainages_0.to_file(os.path.join(output_path, f"{fname.replace('.shp', '_0.shp')}"))

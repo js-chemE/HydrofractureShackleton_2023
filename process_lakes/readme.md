@@ -30,4 +30,4 @@ after main Step 4
 1. run tiles_merge2extent.py to produce extents per tile, year, sat
 2. run tiles_merge2extent_sat.py to produce extents per tile, year
 3. run tiles_merge_extents.py to produce extents per year
-4. run vectorize_extents.py to extrend .shp from .tif 
+4. run vectorize_extents.py to extrend .shp from .tif
